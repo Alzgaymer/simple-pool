@@ -1,10 +1,10 @@
 package main
 
 import (
-	"connection-accepter/config"
-	"connection-accepter/pool"
 	"context"
 	"log"
+	"simple-pool/config"
+	"simple-pool/pool"
 )
 
 func main() {
