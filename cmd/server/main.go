@@ -11,17 +11,20 @@ func main() {
 	log.Println("Started server...")
 	ctx, _ := context.WithDeadline(context.Background(), config.Timeout)
 
-	connPool, err := pool.NewConnPool(ctx, pool.WithListnerConfig(config.Network, config.Address))
+	connPool, err := pool.NewConnPool(pool.WithListnerConfig(ctx, config.Network, config.Address))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	go connPool.AcceptConns()
+	go connPool.AcceptConns(ctx)
 
-	go connPool.HandleConns()
-
-	if err = connPool.Wait(); err != nil {
+	if err = connPool.Wait(ctx); err != nil {
 		log.Println(err)
 	}
 
+	err = connPool.Clear()
+	if err != nil {
+		log.Println(err)
+		return
+	}
 }

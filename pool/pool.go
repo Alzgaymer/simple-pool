@@ -9,34 +9,16 @@ import (
 
 type ConnPool struct {
 	conns    []net.Conn
-	ctx      context.Context
 	listener net.Listener
 	connsCh  chan net.Conn
 }
 
-func (c *ConnPool) HandleConns() error {
+func (c *ConnPool) AcceptConns(ctx context.Context) error {
 	for {
 		select {
-		case <-c.ctx.Done():
-			return c.ctx.Err()
-		case conn := <-c.connsCh:
-			c.conns = append(c.conns, conn)
-			log.Printf("#%d Connection accepted", len(c.conns))
-		}
-	}
-}
-
-func (c *ConnPool) AcceptConns() error {
-	for {
-		select {
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			log.Println("Server is shutting down...")
-			err := c.listener.Close()
-			if err != nil {
-				return err
-			}
-
-			return c.ctx.Err()
+			return ctx.Err()
 		default:
 			accept, err := c.listener.Accept()
 			if err != nil {
@@ -55,7 +37,7 @@ func (c *ConnPool) Dial(network, address string, amount int64) error {
 			return err
 		}
 		log.Printf("#%d Succesful dial", i)
-		c.conns = append(c.conns, conn)
+		c.connsCh <- conn
 	}
 	return nil
 }
@@ -71,17 +53,16 @@ func (c *ConnPool) Close() error {
 	return nil
 }
 
-func (c *ConnPool) Wait() error {
+func (c *ConnPool) Wait(ctx context.Context) error {
 	select {
-	case <-c.ctx.Done():
-		return errors.Join(c.ctx.Err(), c.Close())
+	case <-ctx.Done():
+		return errors.Join(ctx.Err())
 	}
 }
 
-func NewConnPool(ctx context.Context, opts ...Option) (*ConnPool, error) {
+func NewConnPool(opts ...Option) (*ConnPool, error) {
 	var connPool = &ConnPool{
 		conns:   make([]net.Conn, 0),
-		ctx:     ctx,
 		connsCh: make(chan net.Conn),
 	}
 
@@ -91,7 +72,31 @@ func NewConnPool(ctx context.Context, opts ...Option) (*ConnPool, error) {
 		}
 	}
 
+	go connPool.addConns()
+
 	return connPool, nil
+}
+
+func (c *ConnPool) Clear() error {
+	// no need to call c.listner.Close,
+	// because it closes by itself after ctx is done or canceled
+
+	err := c.Close()
+	if err != nil {
+		return err
+	}
+
+	close(c.connsCh)
+	return nil
+}
+
+func (c *ConnPool) addConns() {
+	var count int
+	for conn := range c.connsCh {
+		log.Printf("#%d Connection accepted:", count)
+		count++
+		c.conns = append(c.conns, conn)
+	}
 }
 
 type Option func(pool *ConnPool) error
@@ -103,10 +108,10 @@ func WithListner(l net.Listener) Option {
 	}
 }
 
-func WithListnerConfig(network, address string) Option {
+func WithListnerConfig(ctx context.Context, network, address string) Option {
 	return func(pool *ConnPool) error {
 		var lc net.ListenConfig
-		listener, err := lc.Listen(pool.ctx, network, address)
+		listener, err := lc.Listen(ctx, network, address)
 		if err != nil {
 			return err
 		}
